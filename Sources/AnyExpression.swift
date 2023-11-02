@@ -38,6 +38,7 @@ public struct AnyExpression: CustomStringConvertible {
     private let expression: Expression
     private let describer: () -> String
     private let evaluator: () throws -> Any
+	public var collectionAccess: ((_ collection: Any, _ key: Any) -> Void)?
 
     /// Evaluator for individual symbols
     public typealias SymbolEvaluator = (_ args: [Any]) throws -> Any
@@ -60,13 +61,15 @@ public struct AnyExpression: CustomStringConvertible {
         _ expression: String,
         options: Options = .boolSymbols,
         constants: [String: Any] = [:],
-        symbols: [Symbol: SymbolEvaluator] = [:]
+        symbols: [Symbol: SymbolEvaluator] = [:],
+		collectionAccess: ((_ collection: Any, _ key: Any) -> Void)? = nil
     ) {
         self.init(
             Expression.parse(expression),
             options: options,
             constants: constants,
-            symbols: symbols
+            symbols: symbols,
+			collectionAccess: collectionAccess
         )
     }
 
@@ -75,7 +78,8 @@ public struct AnyExpression: CustomStringConvertible {
         _ expression: ParsedExpression,
         options: Options = [],
         constants: [String: Any] = [:],
-        symbols: [Symbol: SymbolEvaluator] = [:]
+        symbols: [Symbol: SymbolEvaluator] = [:],
+		collectionAccess: ((_ collection: Any, _ key: Any) -> Void)? = nil
     ) {
         // Options
         let pureSymbols = options.contains(.pureSymbols)
@@ -110,7 +114,8 @@ public struct AnyExpression: CustomStringConvertible {
                 default:
                     return symbols[symbol]
                 }
-            }
+            },
+			collectionAccess: collectionAccess
         )
     }
 
@@ -141,8 +146,10 @@ public struct AnyExpression: CustomStringConvertible {
         _ expression: ParsedExpression,
         options: Options,
         impureSymbols: (Symbol) -> SymbolEvaluator?,
-        pureSymbols: (Symbol) -> SymbolEvaluator?
+        pureSymbols: (Symbol) -> SymbolEvaluator?,
+		collectionAccess: ((_ collection: Any, _ key: Any) -> Void)? = nil
     ) {
+		self.collectionAccess = collectionAccess
         let box = NanBox()
 
         func loadNumber(_ arg: Double) -> Double? {
@@ -207,7 +214,8 @@ public struct AnyExpression: CustomStringConvertible {
                         let values = array.values
                         let index = Int(truncating: index) // TODO: should this use Int(exactly:)?
                         if (0 ..< values.count).contains(index) {
-                            return values[index]
+							collectionAccess?(array, index)
+                           return values[index]
                         }
                         throw Error.arrayBounds(symbol, Double(index))
                     case let range as _Range:
@@ -221,6 +229,7 @@ public struct AnyExpression: CustomStringConvertible {
                     guard let value = dictionary.value(for: args[0]) else {
                         throw Error.typeMismatch(symbol, [dictionary, args[0]])
                     }
+					collectionAccess?(dictionary, args[0])
                     return value
                 }
             case let string as _String:
@@ -273,6 +282,7 @@ public struct AnyExpression: CustomStringConvertible {
         // Options
         let boolSymbols = options.contains(.boolSymbols) ? Expression.boolSymbols : [:]
         let shouldOptimize = !options.contains(.noOptimize)
+		let collectionAccess = self.collectionAccess
 
         // Evaluators
         func defaultEvaluator(for symbol: Symbol) -> Expression.SymbolEvaluator? {
@@ -1068,7 +1078,7 @@ extension NSString: _String {
 }
 
 // Used for array values
-private protocol _Array {
+public protocol _Array {
     var values: [Any] { get }
 }
 
@@ -1077,7 +1087,7 @@ private protocol _SwiftArray: _Array {
 }
 
 extension Array: _SwiftArray {
-    fileprivate var values: [Any] {
+	public var values: [Any] {
         return self
     }
 
@@ -1087,7 +1097,7 @@ extension Array: _SwiftArray {
 }
 
 extension ArraySlice: _SwiftArray {
-    fileprivate var values: [Any] {
+	public var values: [Any] {
         return Array(self)
     }
 
@@ -1100,18 +1110,18 @@ extension ArraySlice: _SwiftArray {
 }
 
 extension NSArray: _Array {
-    fileprivate var values: [Any] {
+	public var values: [Any] {
         return Array(self)
     }
 }
 
 // Used for dictionary values
-private protocol _Dictionary {
+public protocol _Dictionary {
     func value(for key: Any) -> Any?
 }
 
 extension Dictionary: _Dictionary {
-    fileprivate func value(for key: Any) -> Any? {
+	public func value(for key: Any) -> Any? {
         guard let key = AnyExpression.cast(key) as Key? else {
             return nil // Type mismatch
         }
@@ -1120,7 +1130,7 @@ extension Dictionary: _Dictionary {
 }
 
 extension NSDictionary: _Dictionary {
-    fileprivate func value(for key: Any) -> Any? {
+	public func value(for key: Any) -> Any? {
         return self[key] as Any
     }
 }
