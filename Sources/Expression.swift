@@ -153,7 +153,7 @@ public final class Expression: CustomStringConvertible {
     }
 
     /// Runtime error when parsing or evaluating an expression
-    public enum Error: Swift.Error, CustomStringConvertible, Equatable {
+    public enum Error: Swift.Error, CustomStringConvertible, LocalizedError, Equatable {
         /// An application-specific error
         case message(String)
 
@@ -212,6 +212,11 @@ public final class Expression: CustomStringConvertible {
                 return "Index \(Expression.stringify(index)) out of bounds for \(symbol)"
             }
         }
+		
+		public var errorDescription: String? {
+			description
+		}
+		
     }
 
     /// Options for configuring an expression

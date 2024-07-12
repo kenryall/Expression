@@ -39,6 +39,7 @@ public struct AnyExpression: CustomStringConvertible {
     private let describer: () -> String
     private let evaluator: () throws -> Any
 	public var collectionAccess: ((_ collection: Any, _ key: Any) -> Void)?
+	public var dictionaryEntryEvaluator: ((_ dictionary: _Dictionary, _ key: Any, _ symbol: Symbol) throws -> Any)?
 
     /// Evaluator for individual symbols
     public typealias SymbolEvaluator = (_ args: [Any]) throws -> Any
@@ -62,14 +63,16 @@ public struct AnyExpression: CustomStringConvertible {
         options: Options = .boolSymbols,
         constants: [String: Any] = [:],
         symbols: [Symbol: SymbolEvaluator] = [:],
-		collectionAccess: ((_ collection: Any, _ key: Any) -> Void)? = nil
+		collectionAccess: ((_ collection: Any, _ key: Any) -> Void)? = nil,
+		dictionaryEntryEvaluator: ((_ dictionary: _Dictionary, _ key: Any, _ symbol: Symbol) throws -> Any)? = nil
     ) {
         self.init(
             Expression.parse(expression),
             options: options,
             constants: constants,
             symbols: symbols,
-			collectionAccess: collectionAccess
+			collectionAccess: collectionAccess,
+			dictionaryEntryEvaluator: dictionaryEntryEvaluator
         )
     }
 
@@ -79,7 +82,8 @@ public struct AnyExpression: CustomStringConvertible {
         options: Options = [],
         constants: [String: Any] = [:],
         symbols: [Symbol: SymbolEvaluator] = [:],
-		collectionAccess: ((_ collection: Any, _ key: Any) -> Void)? = nil
+		collectionAccess: ((_ collection: Any, _ key: Any) -> Void)? = nil,
+		dictionaryEntryEvaluator: ((_ dictionary: _Dictionary, _ key: Any, _ symbol: Symbol) throws -> Any)? = nil
     ) {
         // Options
         let pureSymbols = options.contains(.pureSymbols)
@@ -115,7 +119,8 @@ public struct AnyExpression: CustomStringConvertible {
                     return symbols[symbol]
                 }
             },
-			collectionAccess: collectionAccess
+			collectionAccess: collectionAccess,
+			dictionaryEntryEvaluator: dictionaryEntryEvaluator
         )
     }
 
@@ -147,10 +152,12 @@ public struct AnyExpression: CustomStringConvertible {
         options: Options,
         impureSymbols: (Symbol) -> SymbolEvaluator?,
         pureSymbols: (Symbol) -> SymbolEvaluator?,
-		collectionAccess: ((_ collection: Any, _ key: Any) -> Void)? = nil
+		collectionAccess: ((_ collection: Any, _ key: Any) -> Void)? = nil,
+		dictionaryEntryEvaluator: ((_ dictionary: _Dictionary, _ key: Any, _ symbol: Symbol) throws -> Any)? = nil
     ) {
 		self.collectionAccess = collectionAccess
-        let box = NanBox()
+		self.dictionaryEntryEvaluator = dictionaryEntryEvaluator
+		let box = NanBox()
 
         func loadNumber(_ arg: Double) -> Double? {
             return box.loadIfStored(arg).map {
@@ -213,8 +220,8 @@ public struct AnyExpression: CustomStringConvertible {
                     case let index as NSNumber: // TODO: should Bool be explicitly disallowed?
                         let values = array.values
                         let index = Int(truncating: index) // TODO: should this use Int(exactly:)?
+						collectionAccess?(array, index)
                         if (0 ..< values.count).contains(index) {
-							collectionAccess?(array, index)
                            return values[index]
                         }
                         throw Error.arrayBounds(symbol, Double(index))
@@ -226,6 +233,10 @@ public struct AnyExpression: CustomStringConvertible {
                 }
             case let dictionary as _Dictionary:
                 return { args in
+					if let evaluator = dictionaryEntryEvaluator {
+						collectionAccess?(dictionary, args[0])
+						return try evaluator(dictionary, args[0], symbol)
+					}
                     guard let value = dictionary.value(for: args[0]) else {
                         throw Error.typeMismatch(symbol, [dictionary, args[0]])
                     }
@@ -548,6 +559,17 @@ public struct AnyExpression: CustomStringConvertible {
         self.expression = expression
     }
 
+	private func evaluateDictionaryEntry(symbol: Symbol, dictionary: _Dictionary, key: Any) throws -> Any {
+		guard let value = dictionary.value(for: key) else {
+			throw Error.typeMismatch(symbol, [dictionary, key])
+		}
+		if AnyExpression.isNil(value) {
+			print(value)
+		}
+		collectionAccess?(dictionary, key)
+		return value
+	}
+	
     /// Evaluate the expression
     public func evaluate<T>() throws -> T {
         let anyValue = try evaluator()
@@ -737,7 +759,7 @@ extension AnyExpression {
     }
 
     // Test if a value is nil
-    static func isNil(_ value: Any) -> Bool {
+    static public func isNil(_ value: Any) -> Bool {
         if let optional = value as? _Optional {
             guard let value = optional.value else {
                 return true
